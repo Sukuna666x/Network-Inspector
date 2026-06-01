@@ -1,42 +1,105 @@
 # Network-Inspector 🕵🏻‍♂️
 
-A small C# console tool for Windows that displays active TCP connections and checks individual IP addresses with the VirusTotal API.
+[Deutsch](README.de.md)
 
-## Features 🔥
+Network-Inspector is a small C# console project for learning and experimenting with IP reputation checks using the VirusTotal API v3.  
+At the current stage, the tool provides a simple console menu, validates IP addresses, and retrieves IP-related reputation data from VirusTotal such as ASN owner, country, reputation score, and detection statistics. [web:137][web:314]
 
-- Lists active TCP connections with local address, remote address, and PID
+## Features
+
 - Simple console-based menu
-- Checks an IP address using the VirusTotal API
+- IP address validation before lookup
+- VirusTotal IP lookup via API v3
+- Displays:
+  - AS owner
+  - Country
+  - Reputation
+  - Malicious detections
+  - Suspicious detections
+  - Harmless detections
+  - Undetected results
+  - Tags (if available)
 
-## Requirements ✍🏻
+## Current Status
 
-- Windows
-- .NET SDK or .NET Runtime
-- A valid VirusTotal API key
+This project is currently in an early learning phase.  
+The VirusTotal IP check is already working, while additional features such as active TCP connection inspection are planned for later development.
 
-## Installation ⬇️
+## Requirements
+
+- .NET SDK installed
+- VirusTotal account with API key
+- macOS, Linux, or Windows for the current console version
+
+## Installation
 
 ```bash
 git clone https://github.com/<your-username>/network-inspector.git
 cd network-inspector
-dotnet build
+dotnet build ./src/NetworkInspector
 ```
 
-## Configuration ⚙️
+## Configuration
 
-Add your VirusTotal API key directly in the code or load it from an environment variable such as `VT_API_KEY`.
+Set your VirusTotal API key as an environment variable instead of hardcoding it into the source code.
 
-## Usage 💻
+Example on macOS/Linux:
 
 ```bash
+export VT_API_KEY="your_api_key_here"
+```
+
+This project reads the API key from:
+
+```csharp
+Environment.GetEnvironmentVariable("VT_API_KEY")
+```
+
+## Usage
+
+Run the project with:
+
+```bash
+cd src/NetworkInspector
 dotnet run
 ```
 
 Menu options:
 
-- `1` List active network connections
+- `1` Placeholder for future network connection inspection
 - `2` Check an IP address with VirusTotal
+- `0` Exit the application
 
-## Notes ‼️
+## Example Output
 
-This project is intended as a learning and lab tool. Future improvements may include migration to the VirusTotal v3 API, proper JSON parsing, and more secure secret handling.
+```text
+===== VirusTotal Result =====
+IP: 8.8.8.8
+AS Owner: Google LLC
+Country: US
+Reputation: 543
+Malicious detections: 0
+Suspicious detections: 0
+Harmless detections: 55
+Undetected: 36
+Tags: None
+```
+
+## Roadmap
+
+Planned next steps:
+
+- Refactor VirusTotal logic into a separate service class
+- Improve project structure
+- Add better error handling
+- Add active TCP connection inspection
+- Improve README and repository metadata further
+
+## Notes
+
+This project is intended as a learning project and lab tool.  
+API keys should never be committed to GitHub or stored directly in the code.
+
+## License
+
+No license has been added yet.
