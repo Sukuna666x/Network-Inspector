@@ -34,6 +34,9 @@ public static class LogAnalysisService
         int suspiciousHits = 0;
 
         Dictionary<string, int> ipCounts = new();
+        Dictionary<string, int> failureReasons = new();
+        Dictionary<string, int> countryCounts = new();
+        List<string> suspiciousIpSummaries = new();
 
         foreach (string line in File.ReadLines(LogFilePath))
         {
@@ -51,6 +54,11 @@ public static class LogAnalysisService
 
                 string? eventType = GetString(root, "event_type");
                 string? ip = GetString(root, "ip");
+                string? reason = GetString(root, "reason");
+                string? country = GetString(root, "country");
+
+                int malicious = GetInt(root, "malicious");
+                int suspicious = GetInt(root, "suspicious");
                 bool potentiallySuspicious = GetBool(root, "potentially_suspicious");
 
                 if (eventType == "ip_check_completed")
@@ -69,14 +77,44 @@ public static class LogAnalysisService
                         }
                     }
 
+                    if (!string.IsNullOrWhiteSpace(country))
+                    {
+                        if (countryCounts.ContainsKey(country))
+                        {
+                            countryCounts[country]++;
+                        }
+                        else
+                        {
+                            countryCounts[country] = 1;
+                        }
+                    }
+
                     if (potentiallySuspicious)
                     {
                         suspiciousHits++;
+
+                        string severity = GetSeverity(malicious, suspicious);
+                        string summary = !string.IsNullOrWhiteSpace(ip)
+                            ? $"{ip} | country={country ?? "unknown"} | malicious={malicious} | suspicious={suspicious} | severity={severity}"
+                            : $"unknown-ip | country={country ?? "unknown"} | malicious={malicious} | suspicious={suspicious} | severity={severity}";
+
+                        suspiciousIpSummaries.Add(summary);
                     }
                 }
                 else if (eventType == "ip_check_failed")
                 {
                     failedIpChecks++;
+
+                    string normalizedReason = string.IsNullOrWhiteSpace(reason) ? "unknown" : reason;
+
+                    if (failureReasons.ContainsKey(normalizedReason))
+                    {
+                        failureReasons[normalizedReason]++;
+                    }
+                    else
+                    {
+                        failureReasons[normalizedReason] = 1;
+                    }
                 }
             }
             catch (JsonException)
@@ -85,6 +123,18 @@ public static class LogAnalysisService
         }
 
         var topIps = ipCounts
+            .OrderByDescending(x => x.Value)
+            .ThenBy(x => x.Key)
+            .Take(5)
+            .ToList();
+
+        var topReasons = failureReasons
+            .OrderByDescending(x => x.Value)
+            .ThenBy(x => x.Key)
+            .Take(5)
+            .ToList();
+
+        var topCountries = countryCounts
             .OrderByDescending(x => x.Value)
             .ThenBy(x => x.Key)
             .Take(5)
@@ -100,17 +150,42 @@ public static class LogAnalysisService
 
         Console.WriteLine();
         Console.WriteLine("Top checked IPs:");
+        PrintKeyValueList(topIps, "time(s)");
 
-        if (topIps.Count == 0)
+        Console.WriteLine();
+        Console.WriteLine("Top failure reasons:");
+        PrintKeyValueList(topReasons, "event(s)");
+
+        Console.WriteLine();
+        Console.WriteLine("Countries seen:");
+        PrintKeyValueList(topCountries, "result(s)");
+
+        Console.WriteLine();
+        Console.WriteLine("Suspicious IPs:");
+        if (suspiciousIpSummaries.Count == 0)
         {
             Console.WriteLine("- None");
         }
         else
         {
-            foreach (var item in topIps)
+            foreach (string item in suspiciousIpSummaries.Take(5))
             {
-                Console.WriteLine($"- {item.Key}: {item.Value} time(s)");
+                Console.WriteLine($"- {item}");
             }
+        }
+    }
+
+    private static void PrintKeyValueList(List<KeyValuePair<string, int>> items, string suffix)
+    {
+        if (items.Count == 0)
+        {
+            Console.WriteLine("- None");
+            return;
+        }
+
+        foreach (var item in items)
+        {
+            Console.WriteLine($"- {item.Key}: {item.Value} {suffix}");
         }
     }
 
@@ -134,5 +209,32 @@ public static class LogAnalysisService
         }
 
         return false;
+    }
+
+    private static int GetInt(JsonElement element, string propertyName)
+    {
+        if (element.TryGetProperty(propertyName, out JsonElement value) &&
+            value.ValueKind == JsonValueKind.Number &&
+            value.TryGetInt32(out int result))
+        {
+            return result;
+        }
+
+        return 0;
+    }
+
+    private static string GetSeverity(int malicious, int suspicious)
+    {
+        if (malicious > 0)
+        {
+            return "high";
+        }
+
+        if (suspicious > 0)
+        {
+            return "medium";
+        }
+
+        return "low";
     }
 }
