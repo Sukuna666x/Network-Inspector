@@ -343,9 +343,10 @@ public class ConsoleApp
     private async Task UpdateCaseStatusAsync()
     {
         Console.WriteLine();
-        Console.Write("Enter Case ID or Correlation ID (e.g. NI-20260604-0001 or afdebbe1-23c3-4f8a-aa81-96bb30a40227): ");        string? caseId = Console.ReadLine();
+        Console.Write("Enter Case ID or Correlation ID (e.g. NI-20260605-0001 or afdebbe1-23c3-4f8a-aa81-96bb30a40227): ");
+        string? caseIdentifier = Console.ReadLine();
 
-        if (string.IsNullOrWhiteSpace(caseId))
+        if (string.IsNullOrWhiteSpace(caseIdentifier))
         {
             Console.WriteLine("No Case ID provided.");
             return;
@@ -371,16 +372,41 @@ public class ConsoleApp
         if (string.IsNullOrWhiteSpace(newStatus))
         {
             Console.WriteLine("Invalid status selection.");
+
+            await EventLogger.LogAsync(new
+            {
+                timestamp = DateTimeOffset.UtcNow,
+                level = "WARN",
+                event_type = "case_status_update_failed",
+                outcome = "failure",
+                source = "network-inspector",
+                case_identifier = caseIdentifier,
+                reason = "invalid_status_selection"
+            });
+
             return;
         }
 
-        bool updated = await ReportService.UpdateCaseStatusAsync(caseId.Trim(), newStatus);
+        bool updated = await ReportService.UpdateCaseStatusAsync(caseIdentifier.Trim(), newStatus);
 
         Console.WriteLine();
 
         if (!updated)
         {
             Console.WriteLine("Case not found or status could not be updated.");
+
+            await EventLogger.LogAsync(new
+            {
+                timestamp = DateTimeOffset.UtcNow,
+                level = "WARN",
+                event_type = "case_status_update_failed",
+                outcome = "failure",
+                source = "network-inspector",
+                case_identifier = caseIdentifier,
+                new_status = newStatus,
+                reason = "case_not_found"
+            });
+
             return;
         }
 

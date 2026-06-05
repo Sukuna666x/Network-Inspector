@@ -13,30 +13,67 @@ public static class LogAnalysisService
         "logs",
         "network-inspector.jsonl");
 
-    public static string GetLogFilePath()
-    {
-        return LogFilePath;
-    }
-
     public static void DisplaySummary()
     {
+        Console.WriteLine();
+        Console.WriteLine("===== Local Log Analysis =====");
+        Console.WriteLine();
+
         if (!File.Exists(LogFilePath))
         {
-            Console.WriteLine();
-            Console.WriteLine("No log events found yet.");
-            Console.WriteLine($"Expected log file: {LogFilePath}");
+            Console.WriteLine("No log file found yet. Run some checks first.");
             return;
         }
 
-        int totalEvents = 0;
-        int successfulIpChecks = 0;
-        int failedIpChecks = 0;
-        int suspiciousHits = 0;
+        var stats = AnalyzeLog();
 
-        Dictionary<string, int> ipCounts = new();
-        Dictionary<string, int> failureReasons = new();
-        Dictionary<string, int> countryCounts = new();
-        List<string> suspiciousIpSummaries = new();
+        Console.WriteLine($"Total events: {stats.TotalEvents}");
+        Console.WriteLine($"ip_check_started: {stats.IpCheckStarted}");
+        Console.WriteLine($"ip_check_completed: {stats.IpCheckCompleted}");
+        Console.WriteLine($"case_report_generated: {stats.CaseReportGenerated}");
+        Console.WriteLine($"case_status_updated: {stats.CaseStatusUpdated}");
+        Console.WriteLine();
+
+        Console.WriteLine($"Potentially suspicious IP events: {stats.PotentiallySuspiciousEvents}");
+        Console.WriteLine();
+
+        Console.WriteLine("Top observed IPs (by ip_check_completed):");
+        if (stats.TopIps.Count == 0)
+        {
+            Console.WriteLine("  (none yet)");
+        }
+        else
+        {
+            foreach (var entry in stats.TopIps)
+            {
+                Console.WriteLine($"  {entry.Ip,-18} {entry.Count,3} events (malicious={entry.TotalMalicious}, suspicious={entry.TotalSuspicious})");
+            }
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("Last 5 suspicious ip_check_completed events:");
+        if (stats.LastSuspiciousEvents.Count == 0)
+        {
+            Console.WriteLine("  (none yet)");
+        }
+        else
+        {
+            foreach (var e in stats.LastSuspiciousEvents)
+            {
+                Console.WriteLine($"  [{e.Timestamp}] ip={e.Ip}, malicious={e.Malicious}, suspicious={e.Suspicious}, correlation_id={e.CorrelationId}");
+            }
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("Tip: Use these IPs with menu [2] to re-check reputation, or generate new cases with menu [4].");
+    }
+
+    private static LogStats AnalyzeLog()
+    {
+        var stats = new LogStats();
+
+        var ipCounters = new Dictionary<string, IpAggregate>(StringComparer.OrdinalIgnoreCase);
+        var suspiciousEvents = new List<SuspiciousEvent>();
 
         foreach (string line in File.ReadLines(LogFilePath))
         {
@@ -45,148 +82,112 @@ public static class LogAnalysisService
                 continue;
             }
 
+            JsonDocument? document = null;
             try
             {
-                using JsonDocument document = JsonDocument.Parse(line);
-                JsonElement root = document.RootElement;
-
-                totalEvents++;
-
-                string? eventType = GetString(root, "event_type");
-                string? ip = GetString(root, "ip");
-                string? reason = GetString(root, "reason");
-                string? country = GetString(root, "country");
-
-                int malicious = GetInt(root, "malicious");
-                int suspicious = GetInt(root, "suspicious");
-                bool potentiallySuspicious = GetBool(root, "potentially_suspicious");
-
-                if (eventType == "ip_check_completed")
-                {
-                    successfulIpChecks++;
-
-                    if (!string.IsNullOrWhiteSpace(ip))
-                    {
-                        if (ipCounts.ContainsKey(ip))
-                        {
-                            ipCounts[ip]++;
-                        }
-                        else
-                        {
-                            ipCounts[ip] = 1;
-                        }
-                    }
-
-                    if (!string.IsNullOrWhiteSpace(country))
-                    {
-                        if (countryCounts.ContainsKey(country))
-                        {
-                            countryCounts[country]++;
-                        }
-                        else
-                        {
-                            countryCounts[country] = 1;
-                        }
-                    }
-
-                    if (potentiallySuspicious)
-                    {
-                        suspiciousHits++;
-
-                        string severity = GetSeverity(malicious, suspicious);
-                        string summary = !string.IsNullOrWhiteSpace(ip)
-                            ? $"{ip} | country={country ?? "unknown"} | malicious={malicious} | suspicious={suspicious} | severity={severity}"
-                            : $"unknown-ip | country={country ?? "unknown"} | malicious={malicious} | suspicious={suspicious} | severity={severity}";
-
-                        suspiciousIpSummaries.Add(summary);
-                    }
-                }
-                else if (eventType == "ip_check_failed")
-                {
-                    failedIpChecks++;
-
-                    string normalizedReason = string.IsNullOrWhiteSpace(reason) ? "unknown" : reason;
-
-                    if (failureReasons.ContainsKey(normalizedReason))
-                    {
-                        failureReasons[normalizedReason]++;
-                    }
-                    else
-                    {
-                        failureReasons[normalizedReason] = 1;
-                    }
-                }
+                document = JsonDocument.Parse(line);
             }
             catch (JsonException)
             {
+                continue;
             }
-        }
 
-        var topIps = ipCounts
-            .OrderByDescending(x => x.Value)
-            .ThenBy(x => x.Key)
-            .Take(5)
-            .ToList();
-
-        var topReasons = failureReasons
-            .OrderByDescending(x => x.Value)
-            .ThenBy(x => x.Key)
-            .Take(5)
-            .ToList();
-
-        var topCountries = countryCounts
-            .OrderByDescending(x => x.Value)
-            .ThenBy(x => x.Key)
-            .Take(5)
-            .ToList();
-
-        Console.WriteLine();
-        Console.WriteLine("===== Local Log Analysis =====");
-        Console.WriteLine($"Log file: {LogFilePath}");
-        Console.WriteLine($"Total events: {totalEvents}");
-        Console.WriteLine($"Successful IP checks: {successfulIpChecks}");
-        Console.WriteLine($"Failed IP checks: {failedIpChecks}");
-        Console.WriteLine($"Potentially suspicious results: {suspiciousHits}");
-
-        Console.WriteLine();
-        Console.WriteLine("Top checked IPs:");
-        PrintKeyValueList(topIps, "time(s)");
-
-        Console.WriteLine();
-        Console.WriteLine("Top failure reasons:");
-        PrintKeyValueList(topReasons, "event(s)");
-
-        Console.WriteLine();
-        Console.WriteLine("Countries seen:");
-        PrintKeyValueList(topCountries, "result(s)");
-
-        Console.WriteLine();
-        Console.WriteLine("Suspicious IPs:");
-        if (suspiciousIpSummaries.Count == 0)
-        {
-            Console.WriteLine("- None");
-        }
-        else
-        {
-            foreach (string item in suspiciousIpSummaries.Take(5))
+            using (document)
             {
-                Console.WriteLine($"- {item}");
+                JsonElement root = document.RootElement;
+
+                stats.TotalEvents++;
+
+                string? eventType = GetString(root, "event_type");
+
+                switch (eventType)
+                {
+                    case "ip_check_started":
+                        stats.IpCheckStarted++;
+                        break;
+
+                    case "ip_check_completed":
+                        stats.IpCheckCompleted++;
+                        HandleIpCheckCompleted(root, ipCounters, suspiciousEvents);
+                        break;
+
+                    case "case_report_generated":
+                        stats.CaseReportGenerated++;
+                        break;
+
+                    case "case_status_updated":
+                        stats.CaseStatusUpdated++;
+                        break;
+                }
             }
+        }
+
+        stats.PotentiallySuspiciousEvents = suspiciousEvents.Count;
+
+        stats.TopIps = ipCounters
+            .OrderByDescending(kv => kv.Value.Count)
+            .Take(5)
+            .Select(kv => new TopIp
+            {
+                Ip = kv.Key,
+                Count = kv.Value.Count,
+                TotalMalicious = kv.Value.TotalMalicious,
+                TotalSuspicious = kv.Value.TotalSuspicious
+            })
+            .ToList();
+
+        stats.LastSuspiciousEvents = suspiciousEvents
+            .OrderByDescending(e => e.Timestamp)
+            .Take(5)
+            .OrderBy(e => e.Timestamp)
+            .ToList();
+
+        return stats;
+    }
+
+    private static void HandleIpCheckCompleted(
+        JsonElement root,
+        Dictionary<string, IpAggregate> ipCounters,
+        List<SuspiciousEvent> suspiciousEvents)
+    {
+        string ip = GetString(root, "ip") ?? "unknown";
+        int malicious = GetInt(root, "malicious");
+        int suspicious = GetInt(root, "suspicious");
+        bool potentiallySuspicious = GetBool(root, "potentially_suspicious");
+        string correlationId = GetString(root, "correlation_id") ?? "";
+        string timestamp = GetString(root, "timestamp") ?? "";
+
+        if (!ipCounters.TryGetValue(ip, out IpAggregate? aggregate))
+        {
+            aggregate = new IpAggregate();
+            ipCounters[ip] = aggregate;
+        }
+
+        aggregate.Count++;
+        aggregate.TotalMalicious += malicious;
+        aggregate.TotalSuspicious += suspicious;
+
+        if (potentiallySuspicious)
+        {
+            suspiciousEvents.Add(new SuspiciousEvent
+            {
+                Timestamp = ParseTimestamp(timestamp),
+                Ip = ip,
+                Malicious = malicious,
+                Suspicious = suspicious,
+                CorrelationId = correlationId
+            });
         }
     }
 
-    private static void PrintKeyValueList(List<KeyValuePair<string, int>> items, string suffix)
+    private static DateTimeOffset ParseTimestamp(string timestamp)
     {
-        if (items.Count == 0)
+        if (DateTimeOffset.TryParse(timestamp, out DateTimeOffset parsed))
         {
-            Console.WriteLine("- None");
-            return;
+            return parsed;
         }
 
-        foreach (var item in items)
-        {
-            Console.WriteLine($"- {item.Key}: {item.Value} {suffix}");
-        }
+        return DateTimeOffset.MinValue;
     }
 
     private static string? GetString(JsonElement element, string propertyName)
@@ -223,18 +224,40 @@ public static class LogAnalysisService
         return 0;
     }
 
-    private static string GetSeverity(int malicious, int suspicious)
+    private sealed class LogStats
     {
-        if (malicious > 0)
-        {
-            return "high";
-        }
+        public int TotalEvents { get; set; }
+        public int IpCheckStarted { get; set; }
+        public int IpCheckCompleted { get; set; }
+        public int CaseReportGenerated { get; set; }
+        public int CaseStatusUpdated { get; set; }
+        public int PotentiallySuspiciousEvents { get; set; }
 
-        if (suspicious > 0)
-        {
-            return "medium";
-        }
+        public List<TopIp> TopIps { get; set; } = new();
+        public List<SuspiciousEvent> LastSuspiciousEvents { get; set; } = new();
+    }
 
-        return "low";
+    private sealed class IpAggregate
+    {
+        public int Count { get; set; }
+        public int TotalMalicious { get; set; }
+        public int TotalSuspicious { get; set; }
+    }
+
+    private sealed class TopIp
+    {
+        public string Ip { get; set; } = "";
+        public int Count { get; set; }
+        public int TotalMalicious { get; set; }
+        public int TotalSuspicious { get; set; }
+    }
+
+    private sealed class SuspiciousEvent
+    {
+        public DateTimeOffset Timestamp { get; set; }
+        public string Ip { get; set; } = "";
+        public int Malicious { get; set; }
+        public int Suspicious { get; set; }
+        public string CorrelationId { get; set; } = "";
     }
 }

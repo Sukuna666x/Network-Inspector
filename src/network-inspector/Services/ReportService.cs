@@ -55,6 +55,7 @@ public static class ReportService
         string observedAt = GetString(root, "timestamp") ?? "unknown";
         string source = GetString(root, "source") ?? "network-inspector";
         string caseSource = "virustotal_ip_check";
+
         string ip = GetString(root, "ip") ?? "unknown";
         string country = GetString(root, "country") ?? "unknown";
         string asOwner = GetString(root, "as_owner") ?? "unknown";
@@ -64,10 +65,16 @@ public static class ReportService
         int harmless = GetInt(root, "harmless");
         int undetected = GetInt(root, "undetected");
 
+        string detectionUseCase = "Suspicious outbound IP reputation check";
+        string mitreAttack = MapMitreAttack(malicious, suspicious);
+        string environment = "homelab";
+        string affectedAsset = Environment.MachineName;
+        string analyst = "finn";
+
         string severity = GetSeverity(malicious, suspicious);
         string priority = severity;
         string status = "open";
-        string owner = "finn";
+        string owner = analyst;
         string disposition = GetDisposition(malicious, suspicious);
         string nextStep = GetNextStep(malicious, suspicious);
         string recommendedAction = GetRecommendedAction(malicious, suspicious);
@@ -82,19 +89,30 @@ public static class ReportService
 
         markdown.AppendLine("# SOC Case Report");
         markdown.AppendLine();
+
         markdown.AppendLine("## Executive Summary");
         markdown.AppendLine($"A suspicious IP analysis result was identified by `{source}` and converted into a local SOC-style case report. The observed IP was `{ip}` with severity classified as `{severity}` based on the current local triage logic.");
         markdown.AppendLine();
+
         markdown.AppendLine("## Case Metadata");
         markdown.AppendLine($"- Case ID: `{caseId}`");
         markdown.AppendLine($"- Correlation ID: `{correlationId}`");
         markdown.AppendLine($"- Status: `{status}`");
         markdown.AppendLine($"- Owner: `{owner}`");
+        markdown.AppendLine($"- Analyst: `{analyst}`");
         markdown.AppendLine($"- Priority: `{priority}`");
         markdown.AppendLine($"- Disposition: `{disposition}`");
         markdown.AppendLine($"- Next Step: `{nextStep}`");
         markdown.AppendLine($"- Case Source: `{caseSource}`");
         markdown.AppendLine();
+
+        markdown.AppendLine("## Detection Context");
+        markdown.AppendLine($"- Detection Use Case: `{detectionUseCase}`");
+        markdown.AppendLine($"- MITRE ATT&CK: `{mitreAttack}`");
+        markdown.AppendLine($"- Environment: `{environment}`");
+        markdown.AppendLine($"- Affected Asset: `{affectedAsset}`");
+        markdown.AppendLine();
+
         markdown.AppendLine("## Incident Details");
         markdown.AppendLine($"- Generated At (UTC): `{generatedAt}`");
         markdown.AppendLine($"- Observed At: `{observedAt}`");
@@ -105,23 +123,33 @@ public static class ReportService
         markdown.AppendLine($"- Reputation: `{reputation}`");
         markdown.AppendLine($"- Severity: `{severity}`");
         markdown.AppendLine();
+
         markdown.AppendLine("## Detection Results");
         markdown.AppendLine($"- Malicious detections: `{malicious}`");
         markdown.AppendLine($"- Suspicious detections: `{suspicious}`");
         markdown.AppendLine($"- Harmless detections: `{harmless}`");
         markdown.AppendLine($"- Undetected results: `{undetected}`");
         markdown.AppendLine();
+
         markdown.AppendLine("## Evidence Summary");
         markdown.AppendLine($"The most recent suspicious `ip_check_completed` event in the local JSONL log was used as the evidence source for this case. The result indicates that the IP `{ip}` returned `malicious={malicious}` and `suspicious={suspicious}`, which triggered a severity of `{severity}` in the current triage model.");
         markdown.AppendLine();
+
+        markdown.AppendLine("## Case Timeline");
+        markdown.AppendLine($"- `{NormalizeTimelineTimestamp(observedAt)}` - Source event observed for IP `{ip}`");
+        markdown.AppendLine($"- `{NormalizeTimelineTimestamp(generatedAt)}` - Case created with status `{status}` from suspicious IP event");
+        markdown.AppendLine();
+
         markdown.AppendLine("## Recommended Action");
         markdown.AppendLine(recommendedAction);
         markdown.AppendLine();
+
         markdown.AppendLine("## Analyst Notes");
         markdown.AppendLine("- This report was generated automatically from the latest suspicious local event.");
         markdown.AppendLine("- This case should be reviewed manually before any real blocking or escalation decision is made.");
         markdown.AppendLine("- Future improvements can include timeline expansion, IOC enrichment, and case status tracking.");
         markdown.AppendLine();
+
         markdown.AppendLine("## Detection and Response Notes");
         markdown.AppendLine($"- Detection source: `{caseSource}`");
         markdown.AppendLine("- Report type: locally generated training case");
@@ -142,7 +170,12 @@ public static class ReportService
             severity,
             status,
             owner,
+            analyst,
             priority,
+            environment,
+            affected_asset = affectedAsset,
+            detection_use_case = detectionUseCase,
+            mitre_attack = mitreAttack,
             next_step = nextStep,
             report_path = reportPath
         });
@@ -230,6 +263,13 @@ public static class ReportService
         }
 
         string content = await File.ReadAllTextAsync(matchingFile);
+
+        string currentStatus = ExtractValueFromContent(content, "- Status: `");
+        if (string.Equals(currentStatus, newStatus, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
         string oldStatusLinePrefix = "- Status: `";
         int statusLineStart = content.IndexOf(oldStatusLinePrefix, StringComparison.Ordinal);
 
@@ -250,6 +290,25 @@ public static class ReportService
                                 newStatus +
                                 content.Substring(statusValueEnd);
 
+        string timelineHeader = "## Case Timeline";
+        int timelineIndex = updatedContent.IndexOf(timelineHeader, StringComparison.Ordinal);
+
+        if (timelineIndex >= 0)
+        {
+            int insertionPoint = updatedContent.IndexOf("## Recommended Action", timelineIndex, StringComparison.Ordinal);
+            string previousStatusText = string.IsNullOrWhiteSpace(currentStatus) ? "unknown" : currentStatus;
+            string timelineEntry = $"- `{DateTimeOffset.UtcNow:u}` - Status changed from `{previousStatusText}` to `{newStatus}`{Environment.NewLine}";
+
+            if (insertionPoint >= 0)
+            {
+                updatedContent = updatedContent.Insert(insertionPoint, timelineEntry);
+            }
+            else
+            {
+                updatedContent += Environment.NewLine + timelineEntry;
+            }
+        }
+
         await File.WriteAllTextAsync(matchingFile, updatedContent);
 
         await EventLogger.LogAsync(new
@@ -262,11 +321,46 @@ public static class ReportService
             case_identifier = caseIdentifier,
             case_id = matchedCaseId,
             correlation_id = matchedCorrelationId,
+            previous_status = currentStatus,
             new_status = newStatus,
             report_path = matchingFile
         });
 
         return true;
+    }
+
+    private static void AppendTimelineEntry(StringBuilder markdown, string timestamp, string description)
+    {
+        markdown.AppendLine($"- `{NormalizeTimelineTimestamp(timestamp)}` - {description}");
+    }
+
+    private static string NormalizeTimelineTimestamp(string timestamp)
+    {
+        if (DateTimeOffset.TryParse(timestamp, out DateTimeOffset parsed))
+        {
+            return parsed.UtcDateTime.ToString("u").TrimEnd();
+        }
+
+        return timestamp;
+    }
+
+    private static string ExtractValueFromContent(string content, string prefix)
+    {
+        int lineStart = content.IndexOf(prefix, StringComparison.Ordinal);
+        if (lineStart < 0)
+        {
+            return "";
+        }
+
+        int valueStart = lineStart + prefix.Length;
+        int valueEnd = content.IndexOf('`', valueStart);
+
+        if (valueEnd < 0)
+        {
+            return "";
+        }
+
+        return content.Substring(valueStart, valueEnd - valueStart);
     }
 
     private static string GenerateHumanReadableCaseId()
@@ -304,6 +398,21 @@ public static class ReportService
         {
             return false;
         }
+    }
+
+    private static string MapMitreAttack(int malicious, int suspicious)
+    {
+        if (malicious > 0)
+        {
+            return "TA0011 Command and Control / T1071 Application Layer Protocol";
+        }
+
+        if (suspicious > 0)
+        {
+            return "TA0011 Command and Control";
+        }
+
+        return "N/A";
     }
 
     private static string GetSeverity(int malicious, int suspicious)
